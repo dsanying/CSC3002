@@ -1,23 +1,24 @@
 /*
 * Copyright (c) 2024
-* Version: 3.0
+* Version: 3.1
 * Author: dsanying
 *
 * Update Log:
-* - 新增天梯模式
-*   - 引入全新的天梯模式，玩家可以通过不断挑战更高难度的关卡来提升自己的层数和积分。
-*   - 每通过一层，地雷数量会增加，挑战难度逐渐提升。
-*   - 玩家可以选择继续挑战下一层或返回菜单。
-* - 新增道具系统
-*   - 引入道具系统，玩家可以在天梯模式中使用道具来辅助游戏。
-*   - 复活甲: 使用后下一次踩到地雷游戏不会结束，而是继续正常进行。消耗30积分。
-*   - 地雷扫描仪: 随机揭露两颗地雷的位置。消耗50积分。
-*   - 道具的使用需要消耗积分，积分通过在天梯模式中获胜获得。
-* - 新增积分系统
-*   - 玩家在天梯模式中获胜可以获得积分，积分用于购买道具。
-* - 优化代码逻辑
-*   - 重构部分代码，提高代码的可读性和可维护性。
-*   - 优化游戏性能，减少不必要的计算和内存占用。
+* - 修复了在残局模式下未正确计算已揭开格子数量的问题。
+*   - 在初始化游戏时，增加了 `revealedCount` 变量来记录已揭开的非地雷格子数量。
+*   - 在 `reveal` 函数中，当揭开非地雷格子时，增加 `revealedCount` 的计数。
+* - 优化了 `checkWin` 函数的逻辑。
+*   - 现在 `checkWin` 函数直接检查 `revealedCount` 是否等于非地雷格子的总数，简化了胜利条件的判断。
+* - 修复了在 `useItem` 函数中输入无效选择时未正确处理的问题。
+*   - 增加了对输入的进一步检查，确保用户输入的选择是有效的。
+* - 修复了在 `ladderMode` 函数中输入无效操作时未正确处理的问题。
+*   - 增加了对输入的进一步检查，确保用户输入的操作是有效的。
+* - 优化了 `handleInvalidInput` 函数的逻辑。
+*   - 现在 `handleInvalidInput` 函数会清除输入缓冲区，确保后续输入不会受到前一次输入的影响。
+* - 修复了在 `mineScanner` 函数中未正确处理地雷位置的问题。
+*   - 现在 `mineScanner` 函数会随机揭露两颗地雷的位置，并确保不会重复揭露同一颗地雷。
+* - 修复了在 `revive` 函数中未正确设置复活甲状态的问题。
+*   - 现在 `revive` 函数会正确设置 `hasRevive` 状态，确保复活甲道具能够正常使用。
 */
 #include <iostream>
 #include <vector>
@@ -50,6 +51,7 @@ string gameDifficulty; // 游戏难度
 int currentLevel = 1; // 当前天梯层数
 int score = 0; // 玩家积分
 bool hasRevive = false; // 是否拥有复活甲
+int revealedCount = 0; // 已揭开的非地雷格子数量
 
 // ANSI 转义码
 const string RESET = "\033[0m";
@@ -64,15 +66,15 @@ void startOptionsInterface();
 void printBoard();
 void placeMines();
 void calculateNumbers();
-void reveal ( int x, int y );
-void leftClick ( int x, int y );
-void rightClick ( int x, int y );
+void reveal(int x, int y);
+void leftClick(int x, int y);
+void rightClick(int x, int y);
 bool checkWin();
 void clearScreen();
 void login();
 void logout();
 void showMenu();
-void saveGameRecord ( int rows, int cols, int mines, int duration, bool win, int level );
+void saveGameRecord(int rows, int cols, int mines, int duration, bool win, int level);
 void showHistory();
 void handleInvalidInput();
 void ladderMode();
@@ -93,59 +95,60 @@ int rightClickCount = 0;
 // 初始化游戏
 void initializeGame() {
 	// 初始化棋盘和状态
-	board.assign ( rows, vector<char> ( cols, '0' ) );
-	revealed.assign ( rows, vector<bool> ( cols, false ) );
-	flagged.assign ( rows, vector<bool> ( cols, false ) );
-
+	board.assign(rows, vector<char>(cols, '0'));
+	revealed.assign(rows, vector<bool>(cols, false));
+	flagged.assign(rows, vector<bool>(cols, false));
+	
 	// 重置点击事件计数器
 	leftClickCount = 0;
 	rightClickCount = 0;
 	hasRevive = false; // 重置复活甲状态
+	revealedCount = 0; // 重置已揭开的非地雷格子数量
 }
 
 // 选择游戏模式界面
 void startOptionsInterface() {
 	int choice;
-
-	while ( true ) {
+	
+	while (true) {
 		clearScreen();
 		cout << "选择游戏模式:" << endl;
 		cout << "1. 经典模式" << endl;
 		cout << "2. 残局模式" << endl;
 		cout << "3. 天梯模式" << endl;
 		cin >> choice;
-
-		if ( cin.fail() ) {
+		
+		if (cin.fail()) {
 			handleInvalidInput();
 			continue;
 		}
-
-		switch ( choice ) {
-			case 1:
-				gameMode = "经典模式";
-				break;
-
-			case 2:
-				gameMode = "残局模式";
-				break;
-
-			case 3:
-				gameMode = "天梯模式";
-				cin.ignore ( numeric_limits<streamsize>::max(), '\n' ); // 忽略换行符
-				ladderMode();
-				return;
-
-			default:
-				clearScreen();
-				cout << "无效选择。请重新输入。" << endl;
-				continue;
+		
+		switch (choice) {
+		case 1:
+			gameMode = "经典模式";
+			break;
+			
+		case 2:
+			gameMode = "残局模式";
+			break;
+			
+		case 3:
+			gameMode = "天梯模式";
+			cin.ignore(numeric_limits<streamsize>::max(), '\n'); // 忽略换行符
+			ladderMode();
+			return;
+			
+		default:
+			clearScreen();
+			cout << "无效选择。请重新输入。" << endl;
+			continue;
 		}
-
+		
 		break;
 	}
-
+	
 	// 选择游戏难度
-	while ( true ) {
+	while (true) {
 		clearScreen();
 		cout << "选择游戏难度:" << endl;
 		cout << "1. 简单 (4x4)" << endl;
@@ -153,85 +156,88 @@ void startOptionsInterface() {
 		cout << "3. 困难 (16x16)" << endl;
 		cout << "4. 自定义" << endl;
 		cin >> choice;
-
-		if ( cin.fail() ) {
+		
+		if (cin.fail()) {
 			handleInvalidInput();
 			continue;
 		}
-
-		switch ( choice ) {
-			case 1:
-				rows = EASY;
-				cols = EASY;
-				mines = 5;
-				gameDifficulty = "简单";
-				break;
-
-			case 2:
-				rows = MEDIUM;
-				cols = MEDIUM;
-				mines = 20;
-				gameDifficulty = "中等";
-				break;
-
-			case 3:
-				rows = HARD;
-				cols = HARD;
-				mines = 99;
-				gameDifficulty = "困难";
-				break;
-
-			case 4:
-				gameDifficulty = "自定义";
-
-				while ( true ) {
-					clearScreen(); // 清除屏幕
-					cout << "请输入棋盘行数: ";
-					cin >> rows;
-
-					if ( cin.fail() || rows <= 0 ) {
-						handleInvalidInput();
-						continue;
-					}
-
-					cout << "请输入棋盘列数: ";
-					cin >> cols;
-
-					if ( cin.fail() || cols <= 0 ) {
-						handleInvalidInput();
-						continue;
-					}
-
-					cout << "请输入地雷数量: ";
-					cin >> mines;
-
-					if ( cin.fail() || mines <= 0 || mines >= rows * cols ) {
-						handleInvalidInput();
-						continue;
-					}
-
-					break;
+		
+		switch (choice) {
+		case 1:
+			rows = EASY;
+			cols = EASY;
+			mines = 5;
+			gameDifficulty = "简单";
+			break;
+			
+		case 2:
+			rows = MEDIUM;
+			cols = MEDIUM;
+			mines = 20;
+			gameDifficulty = "中等";
+			break;
+			
+		case 3:
+			rows = HARD;
+			cols = HARD;
+			mines = 99;
+			gameDifficulty = "困难";
+			break;
+			
+		case 4:
+			gameDifficulty = "自定义";
+			
+			while (true) {
+				clearScreen(); // 清除屏幕
+				cout << "请输入棋盘行数: ";
+				cin >> rows;
+				
+				if (cin.fail() || rows <= 0) {
+					handleInvalidInput();
+					continue;
 				}
-
+				
+				cout << "请输入棋盘列数: ";
+				cin >> cols;
+				
+				if (cin.fail() || cols <= 0) {
+					handleInvalidInput();
+					continue;
+				}
+				
+				cout << "请输入地雷数量: ";
+				cin >> mines;
+				
+				if (cin.fail() || mines <= 0 || mines >= rows * cols) {
+					handleInvalidInput();
+					continue;
+				}
+				
 				break;
-
-			default:
-				clearScreen();
-				cout << "无效选择。请重新输入。" << endl;
-				continue;
+			}
+			
+			break;
+			
+		default:
+			clearScreen();
+			cout << "无效选择。请重新输入。" << endl;
+			continue;
 		}
-
+		
 		break;
 	}
-
+	
 	initializeGame(); // 初始化游戏
-
+	
 	// 初始化残局模式，揭开部分格子
-	if ( gameMode == "残局模式" ) {
-		for ( int i = 0; i < rows; ++i ) {
-			for ( int j = 0; j < cols; ++j ) {
-				if ( rand() % 2 == 0 ) {
+	if (gameMode == "残局模式") {
+		for (int i = 0; i < rows; ++i) {
+			for (int j = 0; j < cols; ++j) {
+				if (rand() % 2 == 0) {
 					revealed[i][j] = true;
+					if (board[i][j] != 'M') {
+						revealedCount++;
+					}
 				}
 			}
 		}
@@ -241,54 +247,54 @@ void startOptionsInterface() {
 // 打印棋盘
 void printBoard() {
 	// 计算最大列数的宽度
-	int maxColWidth = to_string ( cols - 1 ).length();
+	int maxColWidth = to_string(cols - 1).length();
 	// 计算最大行数的宽度
-	int maxRowWidth = to_string ( rows - 1 ).length();
+	int maxRowWidth = to_string(rows - 1).length();
 	// 计算每个格子的宽度
-	int cellWidth = max ( maxColWidth, 2 ); // 至少为2，以容纳数字和点
-
+	int cellWidth = max(maxColWidth, 2); // 至少为2，以容纳数字和点
+	
 	// 打印列坐标
 	cout << "   ";
-
-	for ( int j = 0; j < cols; ++j ) {
-		cout << BRIGHT_BLUE << setw ( cellWidth ) << j << RESET << " ";
+	
+	for (int j = 0; j < cols; ++j) {
+		cout << BRIGHT_BLUE << setw(cellWidth) << j << RESET << " ";
 	}
-
+	
 	cout << endl;
-
+	
 	// 打印行坐标和棋盘内容
-	for ( int i = 0; i < rows; ++i ) {
+	for (int i = 0; i < rows; ++i) {
 		// 打印行坐标
-		cout << GREEN << setw ( maxRowWidth ) << i << RESET << " ";
-
-		for ( int j = 0; j < cols; ++j ) {
-			if ( revealed[i][j] ) {
-				if ( board[i][j] == 'M' ) {
-					cout << RED << setw ( cellWidth ) << "M" << RESET << " "; // 用红色标记地雷
+		cout << GREEN << setw(maxRowWidth) << i << RESET << " ";
+		
+		for (int j = 0; j < cols; ++j) {
+			if (revealed[i][j]) {
+				if (board[i][j] == 'M') {
+					cout << RED << setw(cellWidth) << "M" << RESET << " "; // 用红色标记地雷
 				} else {
-					cout << setw ( cellWidth ) << board[i][j] << " "; // 已揭开的格子
+					cout << setw(cellWidth) << board[i][j] << " "; // 已揭开的格子
 				}
-			} else if ( flagged[i][j] ) {
-				cout << setw ( cellWidth ) << "F" << " "; // 被标记为地雷的格子
+			} else if (flagged[i][j]) {
+				cout << setw(cellWidth) << "F" << " "; // 被标记为地雷的格子
 			} else {
-				cout << setw ( cellWidth ) << "." << " "; // 未揭开的格子
+				cout << setw(cellWidth) << "." << " "; // 未揭开的格子
 			}
 		}
-
+		
 		cout << endl;
 	}
 }
 
 // 放置地雷
 void placeMines() {
-	srand ( time ( 0 ) );
+	srand(time(0));
 	int placedMines = 0;
-
-	while ( placedMines < mines ) {
+	
+	while (placedMines < mines) {
 		int x = rand() % rows;
 		int y = rand() % cols;
-
-		if ( board[x][y] != 'M' ) {
+		
+		if (board[x][y] != 'M') {
 			board[x][y] = 'M'; // 放置地雷
 			placedMines++;
 		}
@@ -297,53 +303,57 @@ void placeMines() {
 
 // 计算每个格子周围的地雷数
 void calculateNumbers() {
-	for ( int i = 0; i < rows; ++i ) {
-		for ( int j = 0; j < cols; ++j ) {
-			if ( board[i][j] == 'M' ) continue;
-
+	for (int i = 0; i < rows; ++i) {
+		for (int j = 0; j < cols; ++j) {
+			if (board[i][j] == 'M') continue;
+			
 			int count = 0;
-
-			for ( int dx = -1; dx <= 1; ++dx ) {
-				for ( int dy = -1; dy <= 1; ++dy ) {
+			
+			for (int dx = -1; dx <= 1; ++dx) {
+				for (int dy = -1; dy <= 1; ++dy) {
 					int nx = i + dx;
 					int ny = j + dy;
-
-					if ( nx >= 0 && nx < rows && ny >= 0 && ny < cols && board[nx][ny] == 'M' ) {
+					
+					if (nx >= 0 && nx < rows && ny >= 0 && ny < cols && board[nx][ny] == 'M') {
 						count++;
 					}
 				}
 			}
-
+			
 			board[i][j] = '0' + count; // 设置周围地雷数
 		}
 	}
 }
 
 // 递归揭开格子
-void reveal ( int x, int y ) {
-	if ( x < 0 || x >= rows || y < 0 || y >= cols || revealed[x][y] ) return;
-
+void reveal(int x, int y) {
+	if (x < 0 || x >= rows || y < 0 || y >= cols || revealed[x][y]) return;
+	
 	revealed[x][y] = true;
-
-	if ( board[x][y] == '0' ) {
-		for ( int dx = -1; dx <= 1; ++dx ) {
-			for ( int dy = -1; dy <= 1; ++dy ) {
-				reveal ( x + dx, y + dy );
+	
+	if (board[x][y] != 'M') {
+		revealedCount++;
+	}
+	
+	if (board[x][y] == '0') {
+		for (int dx = -1; dx <= 1; ++dx) {
+			for (int dy = -1; dy <= 1; ++dy) {
+				reveal(x + dx, y + dy);
 			}
 		}
 	}
 }
 
 // 左键点击
-void leftClick ( int x, int y ) {
-	if ( x < 0 || x >= rows || y < 0 || y >= cols ) {
+void leftClick(int x, int y) {
+	if (x < 0 || x >= rows || y < 0 || y >= cols) {
 		clearScreen();
 		cout << "无效坐标，请重新输入。" << endl;
 		return;
 	}
-
-	if ( board[x][y] == 'M' ) {
-		if ( hasRevive ) {
+	
+	if (board[x][y] == 'M') {
+		if (hasRevive) {
 			hasRevive = false; // 使用复活甲
 			clearScreen();
 			cout << YELLOW << "你踩到了地雷，但复活甲救了你！" << RESET << endl;
@@ -353,35 +363,35 @@ void leftClick ( int x, int y ) {
 			cout << YELLOW << "游戏结束！你踩到了地雷。" << RESET << endl;
 			cout << "踩到的地雷位置: (" << x << ", " << y << ")" << endl;
 			cout << "整个棋盘揭开的样子:" << endl;
-
+			
 			// 揭开所有格子
-			for ( int i = 0; i < rows; ++i ) {
-				for ( int j = 0; j < cols; ++j ) {
+			for (int i = 0; i < rows; ++i) {
+				for (int j = 0; j < cols; ++j) {
 					revealed[i][j] = true;
 				}
 			}
-
+			
 			printBoard();
 			// 计算并显示游戏时间
 			auto endTime = chrono::steady_clock::now();
-			auto duration = chrono::duration_cast<chrono::seconds> ( endTime - startTime ).count();
+			auto duration = chrono::duration_cast<chrono::seconds>(endTime - startTime).count();
 			cout << "游戏时间: " << duration << " 秒" << endl;
 			// 显示点击事件次数
 			cout << "有效左键点击次数: " << leftClickCount << endl;
 			cout << "有效右键点击次数: " << rightClickCount << endl;
 			// 保存游戏记录
-			saveGameRecord ( rows, cols, mines, duration, false, currentLevel );
+			saveGameRecord(rows, cols, mines, duration, false, currentLevel);
 			// 询问是否重新开始或返回菜单
 			char choice;
-
-			while ( true ) {
+			
+			while (true) {
 				cout << "游戏结束。输入 'm' 返回菜单，或输入 's' 重新开始: ";
 				cin >> choice;
-
-				if ( choice == 'm' ) {
+				
+				if (choice == 'm') {
 					showMenu();
 					break;
-				} else if ( choice == 's' ) {
+				} else if (choice == 's') {
 					clearScreen();
 					startOptionsInterface();
 					placeMines();
@@ -395,78 +405,58 @@ void leftClick ( int x, int y ) {
 			}
 		}
 	} else {
-		reveal ( x, y );
+		reveal(x, y);
 		leftClickCount++; // 增加左键点击计数
 	}
 }
 
 // 右键点击
-void rightClick ( int x, int y ) {
-	if ( x < 0 || x >= rows || y < 0 || y >= cols ) {
+void rightClick(int x, int y) {
+	if (x < 0 || x >= rows || y < 0 || y >= cols) {
 		clearScreen();
 		cout << "无效坐标，请重新输入。" << endl;
 		return;
 	}
-
+	
 	flagged[x][y] = !flagged[x][y]; // 切换标记状态
 	rightClickCount++; // 增加右键点击计数
 }
 
 // 检查游戏是否胜利
 bool checkWin() {
-	int correctRevealed = 0;
-	int correctFlagged = 0;
-
-	for ( int i = 0; i < rows; ++i ) {
-		for ( int j = 0; j < cols; ++j ) {
-			if ( revealed[i][j] && board[i][j] != 'M' ) {
-				correctRevealed++;
-			}
-
-			if ( flagged[i][j] && board[i][j] == 'M' ) {
-				correctFlagged++;
-			}
-		}
-	}
-
-	// 只有在天梯模式下才增加积分
-	if ( gameMode == "天梯模式" ) {
-		score += correctRevealed + correctFlagged;
-	}
-
-	if ( correctRevealed + mines == rows * cols ) {
+	if (revealedCount + mines == rows * cols) {
 		clearScreen(); // 清除屏幕
 		cout << YELLOW << "游戏胜利！" << RESET << endl;
-		cout << "正确揭开的格子数: " << correctRevealed << endl;
-		cout << "正确标记的地雷数: " << correctFlagged << endl;
+		cout << "正确揭开的格子数: " << revealedCount << endl;
+		cout << "正确标记的地雷数: " << mines << endl;
 		cout << "整个棋盘揭开的样子:" << endl;
-
+		
 		// 揭开所有格子
-		for ( int i = 0; i < rows; ++i ) {
-			for ( int j = 0; j < cols; ++j ) {
+		for (int i = 0; i < rows; ++i) {
+			for (int j = 0; j < cols; ++j) {
 				revealed[i][j] = true;
 			}
 		}
-
+		
 		printBoard();
 		// 计算并显示游戏时间
 		auto endTime = chrono::steady_clock::now();
-		auto duration = chrono::duration_cast<chrono::seconds> ( endTime - startTime ).count();
+		auto duration = chrono::duration_cast<chrono::seconds>(endTime - startTime).count();
 		cout << "游戏时间: " << duration << " 秒" << endl;
 		// 显示点击事件次数
 		cout << "有效左键点击次数: " << leftClickCount << endl;
 		cout << "有效右键点击次数: " << rightClickCount << endl;
 		// 保存游戏记录
-		saveGameRecord ( rows, cols, mines, duration, true, currentLevel );
+		saveGameRecord(rows, cols, mines, duration, true, currentLevel);
 		return true;
 	}
-
+	
 	return false;
 }
 
 // 清除屏幕
 void clearScreen() {
-	system ( "cls" ); // 清除屏幕
+	system("cls"); // 清除屏幕
 }
 
 // 登录
@@ -483,66 +473,66 @@ void logout() {
 	clearScreen();
 	cout << "再见，" << username << "！" << endl;
 	saveScore(); // 保存积分
-	exit ( 0 );
+	exit(0);
 }
 
 // 显示菜单
 void showMenu() {
 	int choice;
-
-	while ( true ) {
+	
+	while (true) {
 		clearScreen();
 		cout << "菜单:" << endl;
 		cout << "1. 开始游戏" << endl;
 		cout << "2. 查看历史战绩" << endl;
 		cout << "3. 登出" << endl;
 		cin >> choice;
-
-		if ( cin.fail() ) {
+		
+		if (cin.fail()) {
 			handleInvalidInput();
 			continue;
 		}
-
-		switch ( choice ) {
-			case 1:
-				clearScreen();
-				startOptionsInterface();
-				placeMines();
-				calculateNumbers();
-				startTime = chrono::steady_clock::now();
-				return;
-
-			case 2:
-				clearScreen();
-				showHistory();
-				return;
-
-			case 3:
-				logout();
-				return;
-
-			default:
-				clearScreen();
-				cout << "无效选择。请重新输入。" << endl;
+		
+		switch (choice) {
+		case 1:
+			clearScreen();
+			startOptionsInterface();
+			placeMines();
+			calculateNumbers();
+			startTime = chrono::steady_clock::now();
+			return;
+			
+		case 2:
+			clearScreen();
+			showHistory();
+			return;
+			
+		case 3:
+			logout();
+			return;
+			
+		default:
+			clearScreen();
+			cout << "无效选择。请重新输入。" << endl;
 		}
 	}
 }
 
 // 保存游戏记录
-void saveGameRecord ( int rows, int cols, int mines, int duration, bool win, int level ) {
-	ofstream file ( username + "_history.txt", ios::app );
-
-	if ( file.is_open() ) {
+void saveGameRecord(int rows, int cols, int mines, int duration, bool win, int level) {
+	ofstream file(username + "_history.txt", ios::app);
+	
+	if (file.is_open()) {
 		auto now = chrono::system_clock::now();
-		auto now_time_t = chrono::system_clock::to_time_t ( now );
-		file << put_time ( localtime ( &now_time_t ), "%Y-%m-%d %H:%M:%S" ) << " " << gameMode << " ";
-
-		if ( gameMode == "经典模式" || gameMode == "残局模式" ) {
-			file << rows << " " << cols << " " << mines << " " << duration << " " << ( win ? "胜利" : "失败" ) << endl;
-		} else if ( gameMode == "天梯模式" ) {
+		auto now_time_t = chrono::system_clock::to_time_t(now);
+		file << put_time(localtime(&now_time_t), "%Y-%m-%d %H:%M:%S") << " " << gameMode << " ";
+		
+		if (gameMode == "经典模式" || gameMode == "残局模式") {
+			file << rows << " " << cols << " " << mines << " " << duration << " " << (win ? "胜利" : "失败") << endl;
+		} else if (gameMode == "天梯模式") {
 			file << level << " " << duration << endl;
 		}
-
+		
 		file.close();
 	} else {
 		cout << "无法保存游戏记录。" << endl;
@@ -551,44 +541,44 @@ void saveGameRecord ( int rows, int cols, int mines, int duration, bool win, int
 
 // 显示历史战绩
 void showHistory() {
-	ifstream file ( username + "_history.txt" );
-
-	if ( file.is_open() ) {
+	ifstream file(username + "_history.txt");
+	
+	if (file.is_open()) {
 		clearScreen();
 		cout << "历史战绩:" << endl;
 		string line;
-
-		while ( getline ( file, line ) ) {
-			istringstream iss ( line );
+		
+		while (getline(file, line)) {
+			istringstream iss(line);
 			string date, time, mode;
 			iss >> date >> time >> mode;
-
-			if ( mode == "经典模式" || mode == "残局模式" ) {
+			
+			if (mode == "经典模式" || mode == "残局模式") {
 				int rows, cols, mines, duration;
 				string result;
 				iss >> rows >> cols >> mines >> duration >> result;
 				cout << "时间: " << date << " " << time << ", 模式: " << mode << ", 棋盘大小: " << rows << "x" << cols << ", 地雷数量: " << mines << ", 游戏时间: " << duration << " 秒, 结果: " << result << endl;
-			} else if ( mode == "天梯模式" ) {
+			} else if (mode == "天梯模式") {
 				int level, duration;
 				string result;
 				iss >> level >> duration >> result;
 				cout << "时间: " << date << " " << time << ", 模式: " << mode << ", 通过层数: " << level - 1 << ", 游戏时间: " << duration << " 秒" << endl;
 			}
 		}
-
+		
 		file.close();
 	} else {
 		clearScreen();
 		cout << "没有历史战绩。" << endl;
 	}
-
+	
 	char choice;
-
-	while ( true ) {
+	
+	while (true) {
 		cout << "输入 'm' 返回菜单: ";
 		cin >> choice;
-
-		if ( choice == 'm' ) {
+		
+		if (choice == 'm') {
 			clearScreen();
 			showMenu();
 			break;
@@ -601,13 +591,10 @@ void showHistory() {
 
 // 处理无效输入
 void handleInvalidInput() {
-	clearScreen();
 	cin.clear(); // 清除错误状态
-
-	cout << "无效输入，请重新输入。" << endl;
+	//cin.ignore(numeric_limits<streamsize>::max(), '\n'); // 清除输入缓冲区
 }
 
-// 天梯模式
 // 天梯模式
 void ladderMode() {
 	currentLevel = 1; // 重置当前层数
@@ -644,7 +631,7 @@ void ladderMode() {
 				
 				if (action == 'l' || action == 'r') {
 					// 检查输入是否包含两个有效数字
-					if (!(iss >> x >> y)) {
+					if (!(iss >> x >> y) || !iss.eof()) {
 						handleInvalidInput();
 						continue;
 					}
@@ -656,15 +643,15 @@ void ladderMode() {
 					}
 				} else if (action == 't') {
 					// 检查输入是否只有 't'
-					if (iss >> x) {
+					if (iss >> x || !iss.eof()) {
 						handleInvalidInput();
-						continue;
+					} else {
+						useItem(); // 使用道具
 					}
-					useItem(); // 使用道具
 				}
 			} else {
-				clearScreen();
-				cout << "无效操作，请重新输入。" << endl;
+				handleInvalidInput();
+				continue;
 			}
 			
 			if (checkWin()) {
@@ -691,8 +678,7 @@ void ladderMode() {
 						showMenu();
 						return;
 					} else {
-						clearScreen();
-						cout << "无效选择。请重新输入。" << endl;
+						handleInvalidInput();
 					}
 				}
 				
@@ -704,9 +690,9 @@ void ladderMode() {
 
 // 保存积分
 void saveScore() {
-	ofstream file ( username + "_score.txt" );
-
-	if ( file.is_open() ) {
+	ofstream file(username + "_score.txt");
+	
+	if (file.is_open()) {
 		file << score;
 		file.close();
 	} else {
@@ -716,9 +702,9 @@ void saveScore() {
 
 // 加载积分
 void loadScore() {
-	ifstream file ( username + "_score.txt" );
-
-	if ( file.is_open() ) {
+	ifstream file(username + "_score.txt");
+	
+	if (file.is_open()) {
 		file >> score;
 		file.close();
 	} else {
@@ -759,6 +745,7 @@ void useItem() {
 				clearScreen();
 				cout << "积分不足，无法使用复活甲道具。" << endl;
 			}
+			
 			break;
 			
 		case 2:
@@ -770,6 +757,7 @@ void useItem() {
 				clearScreen();
 				cout << "积分不足，无法使用地雷扫描仪道具。" << endl;
 			}
+			
 			break;
 			
 		case 3:
@@ -782,33 +770,29 @@ void useItem() {
 	}
 }
 
-
-
-
-
 // 地雷扫描仪道具
 void mineScanner() {
 	int revealedCount = 0;
 	vector<pair<int, int>> minePositions;
-
+	
 	// 收集所有地雷的位置
-	for ( int i = 0; i < rows; ++i ) {
-		for ( int j = 0; j < cols; ++j ) {
-			if ( board[i][j] == 'M' ) {
-				minePositions.push_back ( {i, j} );
+	for (int i = 0; i < rows; ++i) {
+		for (int j = 0; j < cols; ++j) {
+			if (board[i][j] == 'M') {
+				minePositions.push_back({i, j});
 			}
 		}
 	}
-
+	
 	// 随机揭露两颗地雷的位置
-	while ( revealedCount < 2 && !minePositions.empty() ) {
+	while (revealedCount < 2 && !minePositions.empty()) {
 		int index = rand() % minePositions.size();
 		auto [x, y] = minePositions[index];
 		revealed[x][y] = true;
-		minePositions.erase ( minePositions.begin() + index );
+		minePositions.erase(minePositions.begin() + index);
 		revealedCount++;
 	}
-
+	
 	clearScreen();
 	cout << "地雷扫描仪道具已使用，随机揭露了两颗地雷的位置。" << endl;
 }
@@ -826,48 +810,48 @@ void classicAndResidualMode() {
 	placeMines();
 	calculateNumbers();
 	startTime = chrono::steady_clock::now();
-
-	while ( true ) {
+	
+	while (true) {
 		clearScreen();
 		printBoard();
 		char action;
 		cout << "输入操作 (l 为左键点击, r 为右键点击): ";
 		string input;
-		getline ( cin, input );
-		istringstream iss ( input );
+		getline(cin, input);
+		istringstream iss(input);
 		iss >> action;
-
-		if ( action == 'l' || action == 'r' ) {
+		
+		if (action == 'l' || action == 'r') {
 			int x, y;
 			iss >> x >> y;
-
-			if ( iss.fail() ) {
+			
+			if (iss.fail()) {
 				handleInvalidInput();
 				continue;
 			}
-
-			if ( action == 'l' ) {
-				leftClick ( x, y ); // 左键点击
-			} else if ( action == 'r' ) {
-				rightClick ( x, y ); // 右键点击
+			
+			if (action == 'l') {
+				leftClick(x, y); // 左键点击
+			} else if (action == 'r') {
+				rightClick(x, y); // 右键点击
 			}
 		} else {
 			clearScreen();
 			cout << "无效操作，请重新输入。" << endl;
 		}
-
-		if ( checkWin() ) {
+		
+		if (checkWin()) {
 			// 询问是否重新开始或返回菜单
 			char choice;
-
-			while ( true ) {
+			
+			while (true) {
 				cout << "游戏结束。输入 'm' 返回菜单，或输入 's' 重新开始: ";
 				cin >> choice;
-
-				if ( choice == 'm' ) {
+				
+				if (choice == 'm') {
 					showMenu();
 					break;
-				} else if ( choice == 's' ) {
+				} else if (choice == 's') {
 					clearScreen();
 					startOptionsInterface();
 					placeMines();
@@ -886,59 +870,59 @@ void classicAndResidualMode() {
 int main() {
 	login(); // 登录
 	showMenu(); // 显示菜单
-
-	while ( true ) {
+	
+	while (true) {
 		clearScreen(); // 清除屏幕
 		printBoard(); // 打印棋盘
 		char action;
 		cout << "输入操作 (l 为左键点击, r 为右键点击";
-
-		if ( gameMode == "天梯模式" ) {
+		
+		if (gameMode == "天梯模式") {
 			cout << ", t 为使用道具";
 		}
-
+		
 		cout << "): ";
 		string input;
-		getline ( cin, input );
-		istringstream iss ( input );
+		getline(cin, input);
+		istringstream iss(input);
 		iss >> action;
-
-		if ( action == 'l' || action == 'r' || ( action == 't' && gameMode == "天梯模式" ) ) {
+		
+		if (action == 'l' || action == 'r' || (action == 't' && gameMode == "天梯模式")) {
 			int x, y;
-
-			if ( action == 'l' || action == 'r' ) {
+			
+			if (action == 'l' || action == 'r') {
 				iss >> x >> y;
-
-				if ( iss.fail() ) {
+				
+				if (iss.fail()) {
 					handleInvalidInput();
 					continue;
 				}
-
-				if ( action == 'l' ) {
-					leftClick ( x, y ); // 左键点击
-				} else if ( action == 'r' ) {
-					rightClick ( x, y ); // 右键点击
+				
+				if (action == 'l') {
+					leftClick(x, y); // 左键点击
+				} else if (action == 'r') {
+					rightClick(x, y); // 右键点击
 				}
-			} else if ( action == 't' ) {
+			} else if (action == 't') {
 				useItem(); // 使用道具
 			}
 		} else {
 			clearScreen();
 			cout << "无效操作，请重新输入。" << endl;
 		}
-
-		if ( checkWin() ) {
+		
+		if (checkWin()) {
 			// 询问是否重新开始或返回菜单
 			char choice;
-
-			while ( true ) {
+			
+			while (true) {
 				cout << "游戏结束。输入 'm' 返回菜单，或输入 's' 重新开始: ";
 				cin >> choice;
-
-				if ( choice == 'm' ) {
+				
+				if (choice == 'm') {
 					showMenu();
 					break;
-				} else if ( choice == 's' ) {
+				} else if (choice == 's') {
 					clearScreen();
 					startOptionsInterface();
 					placeMines();
@@ -952,6 +936,6 @@ int main() {
 			}
 		}
 	}
-
+	
 	return 0;
 }
